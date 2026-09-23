@@ -1,6 +1,8 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
+const SEVEN_DAYS_IN_SECONDS = 604800 // 7 days
+
 export async function createClient() {
   const cookieStore = await cookies()
 
@@ -8,6 +10,11 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: {
+        maxAge: SEVEN_DAYS_IN_SECONDS,
+        path: '/',
+        sameSite: 'lax',
+      },
       cookies: {
         getAll() {
           return cookieStore.getAll()
@@ -15,7 +22,7 @@ export async function createClient() {
         setAll(cookiesToSet) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
+              cookieStore.set(name, value, { ...options, maxAge: SEVEN_DAYS_IN_SECONDS })
             )
           } catch {
             // The `setAll` method was called from a Server Component.

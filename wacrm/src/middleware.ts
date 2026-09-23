@@ -4,19 +4,28 @@ import { NextResponse, type NextRequest } from 'next/server'
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
+  const SEVEN_DAYS_IN_SECONDS = 604800 // 7 days
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: {
+        maxAge: SEVEN_DAYS_IN_SECONDS,
+        path: '/',
+        sameSite: 'lax',
+      },
       cookies: {
         getAll() {
           return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
+          cookiesToSet.forEach(({ name, value, options }) =>
+            request.cookies.set(name, value, { ...options, maxAge: SEVEN_DAYS_IN_SECONDS })
+          )
           supabaseResponse = NextResponse.next({ request })
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
+            supabaseResponse.cookies.set(name, value, { ...options, maxAge: SEVEN_DAYS_IN_SECONDS })
           )
         },
       },
