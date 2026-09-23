@@ -292,7 +292,7 @@ export function WhatsAppConfig() {
       const data = await res.json();
 
       if (!res.ok) {
-        toast.error(data.error || 'Failed to save configuration');
+        toast.error(data.error || data.message || `Failed to save configuration (Status ${res.status})`);
         setSaving(false);
         return;
       }
