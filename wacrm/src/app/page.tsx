@@ -103,12 +103,14 @@ function Navbar() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur">
       <Container>
-        <nav className="flex h-16 items-center justify-between gap-4">
-          <Link href="/" className="flex items-center gap-2">
-            <span className="text-lg font-semibold tracking-tight text-foreground">
+        <nav className="flex h-16 items-center justify-between gap-2 sm:gap-4">
+          <Link href="/" className="flex shrink-0 items-center gap-2">
+            <span className="whitespace-nowrap text-base font-semibold tracking-tight text-foreground sm:text-lg">
               Yaari CRM
             </span>
-            <Badge variant="outline">WhatsApp CRM</Badge>
+            <Badge variant="outline" className="hidden sm:inline-flex">
+              WhatsApp CRM
+            </Badge>
           </Link>
 
           <div className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
@@ -120,11 +122,20 @@ function Navbar() {
             </Link>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" render={<Link href="/login" />}>
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2.5 text-xs sm:h-9 sm:px-3 sm:text-sm"
+              render={<Link href="/login" />}
+            >
               Sign in
             </Button>
-            <Button size="sm" render={<Link href="/signup" />}>
+            <Button
+              size="sm"
+              className="h-8 px-3 text-xs sm:h-9 sm:px-4 sm:text-sm"
+              render={<Link href="/signup" />}
+            >
               Get started
               <ArrowRight className="size-3.5 opacity-70" data-icon="inline-end" />
             </Button>
