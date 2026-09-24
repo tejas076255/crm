@@ -91,10 +91,11 @@ export async function GET() {
       status?: string
       meta_app_id?: string | null
       meta_app_secret?: string | null
+      verify_token?: string | null
     } | null = null
     const { data: fullConfig, error: configError } = await supabase
       .from('whatsapp_config')
-      .select('phone_number_id, access_token, status, meta_app_id, meta_app_secret')
+      .select('phone_number_id, access_token, status, meta_app_id, meta_app_secret, verify_token')
       .eq('account_id', accountId)
       .maybeSingle()
 
@@ -102,7 +103,7 @@ export async function GET() {
       if (configError.code === '42703') {
         const { data: fallbackConfig, error: fallbackError } = await supabase
           .from('whatsapp_config')
-          .select('phone_number_id, access_token, status')
+          .select('phone_number_id, access_token, status, verify_token')
           .eq('account_id', accountId)
           .maybeSingle()
         if (fallbackError) {
@@ -135,6 +136,16 @@ export async function GET() {
       )
     }
 
+    // Try to decrypt the verify_token if present
+    let decryptedVerifyToken: string = ''
+    if (config.verify_token) {
+      try {
+        decryptedVerifyToken = decrypt(config.verify_token)
+      } catch (err) {
+        console.warn('[whatsapp/config GET] verify_token decryption failed:', err)
+      }
+    }
+
     // Try to decrypt the stored token with the current ENCRYPTION_KEY.
     // If this fails, the key changed (or was never consistent across envs).
     let accessToken: string
@@ -147,6 +158,7 @@ export async function GET() {
           connected: false,
           reason: 'token_corrupted',
           needs_reset: true,
+          verify_token: decryptedVerifyToken,
           message:
             'The stored access token cannot be decrypted with the current ENCRYPTION_KEY. This usually means the key changed, or it differs between environments (local vs Hostinger vs Vercel). Click "Reset Configuration" below, then re-save.',
         },
@@ -165,6 +177,7 @@ export async function GET() {
         phone_info: phoneInfo,
         meta_app_id: config.meta_app_id || '',
         has_meta_app_secret: Boolean(config.meta_app_secret),
+        verify_token: decryptedVerifyToken,
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown Meta API error'
@@ -176,6 +189,7 @@ export async function GET() {
           message: `Meta API rejected the credentials: ${message}`,
           meta_app_id: config.meta_app_id || '',
           has_meta_app_secret: Boolean(config.meta_app_secret),
+          verify_token: decryptedVerifyToken,
         },
         { status: 200 }
       )
@@ -219,9 +233,9 @@ export async function POST(request: Request) {
     const body = await request.json()
     const { phone_number_id, waba_id, access_token, verify_token, pin, meta_app_id, meta_app_secret } = body
 
-    if (!access_token || !phone_number_id) {
+    if (!phone_number_id) {
       return NextResponse.json(
-        { error: 'access_token and phone_number_id are required' },
+        { error: 'phone_number_id is required' },
         { status: 400 }
       )
     }
@@ -233,6 +247,90 @@ export async function POST(request: Request) {
           { status: 400 }
         )
       }
+    }
+
+    // Look up any pre-existing row for this account so we know whether
+    // this number is already registered with Meta and we can reuse stored tokens
+    let existing: {
+      id: string
+      registered_at: string | null
+      phone_number_id: string
+      access_token: string
+      verify_token?: string | null
+      meta_app_secret?: string | null
+      meta_app_id?: string | null
+    } | null = null
+    const { data: fullExisting, error: existingError } = await supabase
+      .from('whatsapp_config')
+      .select('id, registered_at, phone_number_id, access_token, verify_token, meta_app_secret, meta_app_id')
+      .eq('account_id', accountId)
+      .maybeSingle()
+
+    if (existingError?.code === '42703') {
+      const { data: fallbackExisting } = await supabase
+        .from('whatsapp_config')
+        .select('id, registered_at, phone_number_id, access_token, verify_token')
+        .eq('account_id', accountId)
+        .maybeSingle()
+      existing = fallbackExisting
+    } else {
+      existing = fullExisting
+    }
+
+    const isMaskedToken = access_token === '••••••••••••••••'
+    let tokenForMeta: string | null = null
+    let encryptedAccessToken: string | null = null
+
+    if (access_token && !isMaskedToken && typeof access_token === 'string' && access_token.trim()) {
+      tokenForMeta = access_token.trim()
+      try {
+        encryptedAccessToken = encrypt(tokenForMeta)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown encryption error'
+        console.error('Encryption failed:', message)
+        return NextResponse.json(
+          {
+            error:
+              'Failed to encrypt token. Check that ENCRYPTION_KEY is a valid 64-character hex string in your environment variables.',
+          },
+          { status: 500 }
+        )
+      }
+    } else if (existing?.access_token) {
+      try {
+        tokenForMeta = decrypt(existing.access_token)
+        encryptedAccessToken = existing.access_token
+      } catch (err) {
+        console.error('Failed to decrypt existing access token:', err)
+        return NextResponse.json(
+          { error: 'Stored token could not be decrypted. Please enter a new Access Token.' },
+          { status: 400 }
+        )
+      }
+    }
+
+    if (!tokenForMeta || !encryptedAccessToken) {
+      return NextResponse.json(
+        { error: 'access_token and phone_number_id are required' },
+        { status: 400 }
+      )
+    }
+
+    // Encrypt sensitive verify token before storing
+    let encryptedVerifyToken: string | null = null
+    if (verify_token !== undefined && verify_token !== null) {
+      const trimmedVerify = String(verify_token).trim()
+      if (trimmedVerify) {
+        try {
+          encryptedVerifyToken = encrypt(trimmedVerify)
+        } catch (err) {
+          console.error('Verify token encryption failed:', err)
+        }
+      } else {
+        encryptedVerifyToken = null
+      }
+    } else {
+      encryptedVerifyToken = existing?.verify_token ?? null
     }
 
     // Reject if another account has already claimed this phone_number_id.
@@ -272,7 +370,7 @@ export async function POST(request: Request) {
     try {
       phoneInfo = await verifyPhoneNumber({
         phoneNumberId: phone_number_id,
-        accessToken: access_token,
+        accessToken: tokenForMeta,
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown Meta API error'
@@ -281,45 +379,6 @@ export async function POST(request: Request) {
         { error: `Meta API error: ${message}` },
         { status: 400 }
       )
-    }
-
-    // Encrypt sensitive tokens before storing
-    let encryptedAccessToken: string
-    let encryptedVerifyToken: string | null
-    try {
-      encryptedAccessToken = encrypt(access_token)
-      encryptedVerifyToken = verify_token ? encrypt(verify_token) : null
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown encryption error'
-      console.error('Encryption failed:', message)
-      return NextResponse.json(
-        {
-          error:
-            'Failed to encrypt token. Check that ENCRYPTION_KEY is a valid 64-character hex string in your environment variables.',
-        },
-        { status: 500 }
-      )
-    }
-
-    // Look up any pre-existing row for this account so we know whether
-    // this number is already registered with Meta — if so we can skip
-    // /register when the user didn't provide a PIN this time around.
-    let existing: { id: string; registered_at: string | null; phone_number_id: string; meta_app_secret?: string | null; meta_app_id?: string | null } | null = null
-    const { data: fullExisting, error: existingError } = await supabase
-      .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id, meta_app_secret, meta_app_id')
-      .eq('account_id', accountId)
-      .maybeSingle()
-
-    if (existingError?.code === '42703') {
-      const { data: fallbackExisting } = await supabase
-        .from('whatsapp_config')
-        .select('id, registered_at, phone_number_id')
-        .eq('account_id', accountId)
-        .maybeSingle()
-      existing = fallbackExisting
-    } else {
-      existing = fullExisting
     }
 
     let encryptedMetaAppSecret: string | null = null
@@ -372,7 +431,7 @@ export async function POST(request: Request) {
         try {
           await registerPhoneNumber({
             phoneNumberId: phone_number_id,
-            accessToken: access_token,
+            accessToken: tokenForMeta,
             pin,
           })
           registeredAt = new Date().toISOString()
@@ -397,7 +456,7 @@ export async function POST(request: Request) {
       try {
         await subscribeWabaToApp({
           wabaId: waba_id,
-          accessToken: access_token,
+          accessToken: tokenForMeta,
         })
         subscribedAppsAt = new Date().toISOString()
       } catch (err) {

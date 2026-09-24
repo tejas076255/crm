@@ -1503,7 +1503,7 @@
       "wabaId": "WhatsApp Business Account ID",
       "accessToken": "Permanent Access Token",
       "accessTokenPlaceholder": "Enter your access token",
-      "tokenHidden": "Token is hidden for security. Re-enter it to update configuration.",
+      "tokenHidden": "Token is stored securely in the database. Leave as-is or re-enter only if you wish to change it.",
       "webhookVerifyToken": "Webhook Verify Token",
       "webhookVerifyTokenPlaceholder": "Create a custom verify token",
       "webhookVerifyTokenHint": "A custom string you create. Must match the token you set in Meta webhook settings.",
