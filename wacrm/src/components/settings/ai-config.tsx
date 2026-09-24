@@ -374,13 +374,7 @@ export function AiConfig() {
                       setApiKey(e.target.value);
                       setKeyEdited(true);
                     }}
-                    onFocus={() => {
-                      if (!keyEdited && hasStoredKey) {
-                        setApiKey('');
-                        setKeyEdited(true);
-                      }
-                    }}
-                    placeholder={KEY_PLACEHOLDER[provider]}
+                    placeholder={hasStoredKey && !keyEdited ? '••••••••••••••••' : KEY_PLACEHOLDER[provider]}
                     disabled={disabled}
                     autoComplete="off"
                   />
@@ -410,6 +404,28 @@ export function AiConfig() {
                   {t('testKey')}
                 </Button>
               </div>
+              {hasStoredKey && (
+                <div className="flex items-center justify-between text-xs pt-0.5">
+                  <p className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+                    <CheckCircle2 className="size-3.5" />
+                    {keyEdited && apiKey !== MASKED_KEY
+                      ? 'New API key entered (click Save to update in database)'
+                      : 'API key is safely stored in database (hidden for security)'}
+                  </p>
+                  {keyEdited && apiKey !== MASKED_KEY && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setApiKey(MASKED_KEY);
+                        setKeyEdited(false);
+                      }}
+                      className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer"
+                    >
+                      Keep stored key
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -427,16 +443,32 @@ export function AiConfig() {
                   setEmbeddingsKey(e.target.value);
                   setEmbeddingsKeyEdited(true);
                 }}
-                onFocus={() => {
-                  if (!embeddingsKeyEdited && hasStoredEmbeddingsKey) {
-                    setEmbeddingsKey('');
-                    setEmbeddingsKeyEdited(true);
-                  }
-                }}
-                placeholder="sk-... (OpenAI)"
+                placeholder={hasStoredEmbeddingsKey && !embeddingsKeyEdited ? '••••••••••••••••' : 'sk-... (OpenAI)'}
                 disabled={disabled}
                 autoComplete="off"
               />
+              {hasStoredEmbeddingsKey && (
+                <div className="flex items-center justify-between text-xs pt-0.5">
+                  <p className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+                    <CheckCircle2 className="size-3.5" />
+                    {embeddingsKeyEdited && embeddingsKey !== MASKED_KEY
+                      ? 'New embeddings key entered (click Save to update in database)'
+                      : 'Embeddings key is safely stored in database'}
+                  </p>
+                  {embeddingsKeyEdited && embeddingsKey !== MASKED_KEY && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmbeddingsKey(MASKED_KEY);
+                        setEmbeddingsKeyEdited(false);
+                      }}
+                      className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer"
+                    >
+                      Keep stored key
+                    </button>
+                  )}
+                </div>
+              )}
               <p className="text-xs text-muted-foreground">
                 {t('embeddingsHint', {
                   sameKeyText: provider === 'openai' ? t('sameKeyText') : '',
