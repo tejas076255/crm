@@ -91,7 +91,8 @@ export function AiConfig() {
   const [systemPrompt, setSystemPrompt] = useState('');
   const [isActive, setIsActive] = useState(false);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
-  const [maxPerConversation, setMaxPerConversation] = useState(3);
+  const [maxPerConversation, setMaxPerConversation] = useState(20);
+  const [isUnlimited, setIsUnlimited] = useState(true);
   // Empty string = leave unassigned (shared queue).
   const [handoffAgentId, setHandoffAgentId] = useState('');
   const [members, setMembers] = useState<AccountMember[]>([]);
@@ -119,7 +120,9 @@ export function AiConfig() {
         setSystemPrompt(data.system_prompt ?? '');
         setIsActive(data.is_active);
         setAutoReplyEnabled(data.auto_reply_enabled);
-        setMaxPerConversation(data.auto_reply_max_per_conversation ?? 3);
+        const maxVal = data.auto_reply_max_per_conversation ?? 20;
+        setMaxPerConversation(maxVal);
+        setIsUnlimited(maxVal >= 20 || maxVal === 0);
         setHandoffAgentId(data.handoff_agent_id ?? '');
         setHasStoredKey(Boolean(data.has_key));
         setApiKey(data.has_key ? MASKED_KEY : '');
@@ -170,7 +173,7 @@ export function AiConfig() {
     system_prompt: systemPrompt.trim() || null,
     is_active: isActive,
     auto_reply_enabled: autoReplyEnabled,
-    auto_reply_max_per_conversation: maxPerConversation,
+    auto_reply_max_per_conversation: isUnlimited ? 20 : maxPerConversation,
     handoff_agent_id: handoffAgentId || null,
   });
 
@@ -530,27 +533,60 @@ export function AiConfig() {
               />
             </div>
 
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <Label htmlFor="ai-max">{t('maxAutoReplies')}</Label>
-                <p className="text-xs text-muted-foreground">
-                  {t('maxAutoRepliesDesc')}
-                </p>
+            <div className="rounded-md border border-border p-3 space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="ai-unlimited" className="text-sm font-medium">
+                      Unlimited Auto-Replies
+                    </Label>
+                    <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                      ∞ Unlimited
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Bot replies continuously to every inbound message in the thread without stopping.
+                  </p>
+                </div>
+                <Switch
+                  id="ai-unlimited"
+                  checked={isUnlimited}
+                  onCheckedChange={(checked) => {
+                    setIsUnlimited(checked);
+                    if (checked) {
+                      setMaxPerConversation(20);
+                    } else {
+                      setMaxPerConversation(5);
+                    }
+                  }}
+                  disabled={disabled || !autoReplyEnabled}
+                />
               </div>
-              <Input
-                id="ai-max"
-                type="number"
-                min={1}
-                max={20}
-                value={maxPerConversation}
-                onChange={(e) =>
-                  setMaxPerConversation(
-                    Math.min(20, Math.max(1, Number(e.target.value) || 1)),
-                  )
-                }
-                disabled={disabled || !autoReplyEnabled}
-                className="w-20"
-              />
+
+              {!isUnlimited && (
+                <div className="flex items-center justify-between gap-4 pt-3 border-t border-border">
+                  <div>
+                    <Label htmlFor="ai-max">{t('maxAutoReplies')}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t('maxAutoRepliesDesc')}
+                    </p>
+                  </div>
+                  <Input
+                    id="ai-max"
+                    type="number"
+                    min={1}
+                    max={19}
+                    value={maxPerConversation}
+                    onChange={(e) =>
+                      setMaxPerConversation(
+                        Math.min(19, Math.max(1, Number(e.target.value) || 1)),
+                      )
+                    }
+                    disabled={disabled || !autoReplyEnabled}
+                    className="w-20"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">

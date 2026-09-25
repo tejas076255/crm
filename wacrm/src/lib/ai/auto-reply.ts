@@ -75,9 +75,12 @@ export async function dispatchInboundToAiReply(
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
-    // Cheap early-out; the authoritative cap check is the atomic claim
-    // below (this read can race a concurrent inbound).
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    // Cheap early-out; when autoReplyMaxPerConversation is >= 20 or <= 0, replies are unlimited.
+    const isUnlimited =
+      config.autoReplyMaxPerConversation >= 20 ||
+      config.autoReplyMaxPerConversation <= 0
+    if (!isUnlimited && conv.ai_reply_count >= config.autoReplyMaxPerConversation)
+      return
 
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
@@ -162,11 +165,12 @@ export async function dispatchInboundToAiReply(
     // another inbound just took the last slot, `claimed` is false and we
     // skip the send. (We consume a slot slightly before the send lands —
     // fail-safe: under-reply rather than over-reply.)
+    const maxReplies = isUnlimited ? 2147483647 : config.autoReplyMaxPerConversation
     const { data: claimed, error: claimErr } = await db.rpc(
       'claim_ai_reply_slot',
       {
         conversation_id: conversationId,
-        max_replies: config.autoReplyMaxPerConversation,
+        max_replies: maxReplies,
       },
     )
     if (claimErr) {
