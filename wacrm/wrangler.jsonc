@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "crm",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "NEXT_PUBLIC_SUPABASE_URL": "https://nlchiauveooekcdywbgx.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sY2hpYXV2ZW9vZWtjZHl3Ymd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg0NjA3NDAsImV4cCI6MjEwNDAzNjc0MH0.wUkEkTh8ryHOUO5jgZoxdktxx2CTX1Y3B0jPddXZUhI",
+    "NEXT_PUBLIC_RAZORPAY_KEY_ID": "rzp_test_TYjiPkhV5eU62p",
+    "NEXT_PUBLIC_SITE_URL": "https://crm.tejasgogavale5.workers.dev",
+    "NEXT_PUBLIC_APP_LOCALE": "en"
+  }
+}
