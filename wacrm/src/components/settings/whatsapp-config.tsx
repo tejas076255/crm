@@ -116,15 +116,27 @@ export function WhatsAppConfig() {
       ? `${window.location.origin}/api/whatsapp/webhook`
       : '';
 
+  const saveDraft = useCallback(
+    (field: string, val: string) => {
+      if (!accountId) return;
+      try {
+        const currentDraft = JSON.parse(
+          localStorage.getItem(`wacrm_draft_whatsapp_${accountId}`) || '{}'
+        );
+        currentDraft[field] = val;
+        localStorage.setItem(
+          `wacrm_draft_whatsapp_${accountId}`,
+          JSON.stringify(currentDraft)
+        );
+      } catch {}
+    },
+    [accountId]
+  );
+
   const fetchConfig = useCallback(async (acctId: string) => {
     setLoading(true);
     try {
-      // Load form values from Supabase (shows what's in DB).
-      // Switched from `user_id` (which would only match the row's
-      // original author) to `account_id` so every member of the
-      // account sees the same saved configuration. UNIQUE(account_id)
-      // on the table guarantees the .maybeSingle() return type
-      // remains accurate.
+      // 1. Load form values from Supabase DB
       const { data, error } = await supabase
         .from('whatsapp_config')
         .select('*')
@@ -132,7 +144,7 @@ export function WhatsAppConfig() {
         .maybeSingle();
 
       if (error) {
-        console.error('Failed to load config row:', error);
+        console.error('Failed to load config row from DB:', error);
       }
 
       if (data) {
@@ -140,11 +152,8 @@ export function WhatsAppConfig() {
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
-        setVerifyToken('');
         setPin('');
         setTokenEdited(false);
-        // Undefined on a row read before migration 039 — treat that as
-        // on, matching the webhook's own default.
         setMirrorMedia(data.mirror_inbound_media !== false);
         setMetaAppId(data.meta_app_id || '');
         setMetaAppSecret(data.meta_app_secret ? MASKED_TOKEN : '');
@@ -162,36 +171,60 @@ export function WhatsAppConfig() {
         setMetaAppSecret('');
         setMetaAppSecretEdited(false);
       }
-      // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
 
-      // Then verify health via the API (decrypts token + pings Meta)
-      if (data) {
-        try {
-          const res = await fetch('/api/whatsapp/config', { method: 'GET' });
-          const payload = await res.json();
+      // 2. Fetch full server-resolved config & decrypted verify_token
+      try {
+        const res = await fetch('/api/whatsapp/config', { method: 'GET' });
+        const payload = await res.json();
 
-          if (payload.verify_token) {
-            setVerifyToken(payload.verify_token);
-          }
-
-          if (payload.connected) {
-            setConnectionStatus('connected');
-            setResetReason(null);
-            setStatusMessage('');
-          } else {
-            setConnectionStatus('disconnected');
-            setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
-            setStatusMessage(payload.message || '');
-          }
-        } catch (err) {
-          console.error('Health check failed:', err);
-          setConnectionStatus('disconnected');
+        if (payload.phone_number_id) {
+          setPhoneNumberId(payload.phone_number_id);
         }
-      } else {
+        if (payload.waba_id) {
+          setWabaId(payload.waba_id);
+        }
+        if (payload.meta_app_id) {
+          setMetaAppId(payload.meta_app_id);
+        }
+        if (payload.verify_token) {
+          setVerifyToken(payload.verify_token);
+        }
+        if (payload.has_access_token) {
+          setAccessToken(MASKED_TOKEN);
+          setTokenEdited(false);
+        }
+        if (payload.has_meta_app_secret) {
+          setMetaAppSecret(MASKED_TOKEN);
+          setMetaAppSecretEdited(false);
+        }
+
+        if (payload.connected) {
+          setConnectionStatus('connected');
+          setResetReason(null);
+          setStatusMessage('');
+        } else {
+          setConnectionStatus('disconnected');
+          setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
+          setStatusMessage(payload.message || '');
+        }
+
+        // 3. Fallback: check if an unsaved local draft exists for this account
+        try {
+          const draftJson = localStorage.getItem(`wacrm_draft_whatsapp_${acctId}`);
+          if (draftJson) {
+            const draft = JSON.parse(draftJson);
+            if (!data && !payload.phone_number_id) {
+              if (draft.phoneNumberId) setPhoneNumberId(draft.phoneNumberId);
+              if (draft.wabaId) setWabaId(draft.wabaId);
+              if (draft.metaAppId) setMetaAppId(draft.metaAppId);
+              if (draft.verifyToken) setVerifyToken(draft.verifyToken);
+            }
+          }
+        } catch {}
+      } catch (err) {
+        console.error('Health check failed:', err);
         setConnectionStatus('disconnected');
-        setResetReason(null);
-        setStatusMessage('');
       }
     } catch (err) {
       console.error('fetchConfig error:', err);
@@ -296,13 +329,9 @@ export function WhatsAppConfig() {
         return;
       }
 
-      // The route now returns a structured outcome:
-      //   * registered=true   → number is live, events will flow
-      //   * registered=false  → credentials saved but /register
-      //                         failed; UI shows the specific error
-      //                         and a retry path. registration_error
-      //                         is human-readable from Meta.
-      if (data.registered === false && data.registration_error) {
+      if (data.warning) {
+        toast.warning(data.warning, { duration: 10000 });
+      } else if (data.registered === false && data.registration_error) {
         toast.error(
           `Saved, but Meta couldn't register the number: ${data.registration_error}`,
           { duration: 12000 },
@@ -328,6 +357,12 @@ export function WhatsAppConfig() {
         // the PIN became stale).
         setPin('');
       }
+
+      try {
+        if (accountId) {
+          localStorage.removeItem(`wacrm_draft_whatsapp_${accountId}`);
+        }
+      } catch {}
 
       if (accountId) await fetchConfig(accountId);
     } catch (err) {
@@ -410,6 +445,11 @@ export function WhatsAppConfig() {
       }
 
       toast.success('Configuration cleared. You can now re-enter your credentials.');
+      try {
+        if (accountId) {
+          localStorage.removeItem(`wacrm_draft_whatsapp_${accountId}`);
+        }
+      } catch {}
       setConfig(null);
       setPhoneNumberId('');
       setWabaId('');
@@ -629,7 +669,10 @@ export function WhatsAppConfig() {
               <Input
                 placeholder="e.g. 100234567890123"
                 value={phoneNumberId}
-                onChange={(e) => setPhoneNumberId(e.target.value)}
+                onChange={(e) => {
+                  setPhoneNumberId(e.target.value);
+                  saveDraft('phoneNumberId', e.target.value);
+                }}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
@@ -639,7 +682,10 @@ export function WhatsAppConfig() {
               <Input
                 placeholder="e.g. 100234567890456"
                 value={wabaId}
-                onChange={(e) => setWabaId(e.target.value)}
+                onChange={(e) => {
+                  setWabaId(e.target.value);
+                  saveDraft('wabaId', e.target.value);
+                }}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
@@ -683,7 +729,10 @@ export function WhatsAppConfig() {
               <Input
                 placeholder={t('webhookVerifyTokenPlaceholder')}
                 value={verifyToken}
-                onChange={(e) => setVerifyToken(e.target.value)}
+                onChange={(e) => {
+                  setVerifyToken(e.target.value);
+                  saveDraft('verifyToken', e.target.value);
+                }}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
               <p className="text-xs text-muted-foreground">
@@ -725,7 +774,10 @@ export function WhatsAppConfig() {
                 <Input
                   placeholder="e.g. 123456789012345"
                   value={metaAppId}
-                  onChange={(e) => setMetaAppId(e.target.value)}
+                  onChange={(e) => {
+                    setMetaAppId(e.target.value);
+                    saveDraft('metaAppId', e.target.value);
+                  }}
                   className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                 />
                 <p className="text-xs text-muted-foreground">

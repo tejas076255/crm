@@ -87,15 +87,18 @@ export async function GET() {
 
     let config: {
       phone_number_id: string
+      waba_id?: string | null
       access_token: string
       status?: string
       meta_app_id?: string | null
       meta_app_secret?: string | null
       verify_token?: string | null
+      registered_at?: string | null
+      mirror_inbound_media?: boolean
     } | null = null
     const { data: fullConfig, error: configError } = await supabase
       .from('whatsapp_config')
-      .select('phone_number_id, access_token, status, meta_app_id, meta_app_secret, verify_token')
+      .select('phone_number_id, waba_id, access_token, status, meta_app_id, meta_app_secret, verify_token, registered_at, mirror_inbound_media')
       .eq('account_id', accountId)
       .maybeSingle()
 
@@ -103,7 +106,7 @@ export async function GET() {
       if (configError.code === '42703') {
         const { data: fallbackConfig, error: fallbackError } = await supabase
           .from('whatsapp_config')
-          .select('phone_number_id, access_token, status, verify_token')
+          .select('phone_number_id, waba_id, access_token, status, verify_token')
           .eq('account_id', accountId)
           .maybeSingle()
         if (fallbackError) {
@@ -158,6 +161,11 @@ export async function GET() {
           connected: false,
           reason: 'token_corrupted',
           needs_reset: true,
+          phone_number_id: config.phone_number_id,
+          waba_id: config.waba_id || '',
+          meta_app_id: config.meta_app_id || '',
+          has_meta_app_secret: Boolean(config.meta_app_secret),
+          has_access_token: Boolean(config.access_token),
           verify_token: decryptedVerifyToken,
           message:
             'The stored access token cannot be decrypted with the current ENCRYPTION_KEY. This usually means the key changed, or it differs between environments (local vs Hostinger vs Vercel). Click "Reset Configuration" below, then re-save.',
@@ -175,9 +183,15 @@ export async function GET() {
       return NextResponse.json({
         connected: true,
         phone_info: phoneInfo,
+        phone_number_id: config.phone_number_id,
+        waba_id: config.waba_id || '',
         meta_app_id: config.meta_app_id || '',
         has_meta_app_secret: Boolean(config.meta_app_secret),
+        has_access_token: Boolean(config.access_token),
         verify_token: decryptedVerifyToken,
+        status: config.status,
+        registered_at: config.registered_at,
+        mirror_inbound_media: config.mirror_inbound_media,
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown Meta API error'
@@ -187,9 +201,14 @@ export async function GET() {
           connected: false,
           reason: 'meta_api_error',
           message: `Meta API rejected the credentials: ${message}`,
+          phone_number_id: config.phone_number_id,
+          waba_id: config.waba_id || '',
           meta_app_id: config.meta_app_id || '',
           has_meta_app_secret: Boolean(config.meta_app_secret),
+          has_access_token: Boolean(config.access_token),
           verify_token: decryptedVerifyToken,
+          status: config.status,
+          registered_at: config.registered_at,
         },
         { status: 200 }
       )
@@ -365,20 +384,18 @@ export async function POST(request: Request) {
       )
     }
 
-    // Verify credentials with Meta BEFORE saving
-    let phoneInfo
+    // Verify credentials with Meta BEFORE saving (best-effort: save row even if Meta is unreachable or rejects credentials)
+    let phoneInfo = null
+    let metaVerificationError: string | null = null
     try {
       phoneInfo = await verifyPhoneNumber({
         phoneNumberId: phone_number_id,
         accessToken: tokenForMeta,
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown Meta API error'
-      console.error('Meta API verification failed during save:', message)
-      return NextResponse.json(
-        { error: `Meta API error: ${message}` },
-        { status: 400 }
-      )
+      metaVerificationError =
+        err instanceof Error ? err.message : 'Unknown Meta API error'
+      console.warn('Meta API verification failed during save (persisting to DB anyway):', metaVerificationError)
     }
 
     let encryptedMetaAppSecret: string | null = null
@@ -414,7 +431,7 @@ export async function POST(request: Request) {
     // is not a failure, just an incomplete-but-valid save.
     let registrationSkipped = false
 
-    const needsRegistration = !sameNumber || (typeof pin === 'string' && pin.length > 0)
+    const needsRegistration = (!sameNumber || (typeof pin === 'string' && pin.length > 0)) && !metaVerificationError
     if (needsRegistration) {
       if (!pin) {
         // No PIN provided. Meta TEST numbers (Developer Console) are
@@ -422,10 +439,9 @@ export async function POST(request: Request) {
         // PIN to set, so requiring one made them impossible to connect
         // (issue #242). The /register + PIN step only matters for
         // production numbers under a shared WABA (issue #136), so treat
-        // it as best-effort: skip it, save the (already Meta-verified)
-        // credentials as connected, and leave registered_at null. The
-        // UI surfaces a separate "Not registered" banner with a path to
-        // add a PIN later for users who do need inbound webhook routing.
+        // it as best-effort: skip it, save the credentials as connected,
+        // and leave registered_at null. The UI surfaces a separate "Not registered"
+        // banner with a path to add a PIN later for users who do need inbound webhook routing.
         registrationSkipped = true
       } else {
         try {
@@ -452,7 +468,7 @@ export async function POST(request: Request) {
     // Skipped only when there's no waba_id (legacy rows from before
     // we required it).
     let subscribedAppsAt: string | null = null
-    if (waba_id) {
+    if (waba_id && !metaVerificationError) {
       try {
         await subscribeWabaToApp({
           wabaId: waba_id,
@@ -471,6 +487,7 @@ export async function POST(request: Request) {
     // Persist everything in one shot. If /register failed we still
     // store the credentials and the error so the UI can guide the
     // user through a retry.
+    const effectiveError = metaVerificationError || registrationError
     const baseRow = {
       phone_number_id,
       waba_id: waba_id || null,
@@ -478,11 +495,11 @@ export async function POST(request: Request) {
       verify_token: encryptedVerifyToken,
       meta_app_id: meta_app_id !== undefined ? (meta_app_id || null) : (existing?.meta_app_id ?? null),
       meta_app_secret: encryptedMetaAppSecret,
-      status: registrationError ? 'disconnected' : 'connected',
-      connected_at: registrationError ? null : new Date().toISOString(),
-      registered_at: registrationError ? null : registeredAt,
+      status: effectiveError ? 'disconnected' : 'connected',
+      connected_at: effectiveError ? null : new Date().toISOString(),
+      registered_at: effectiveError ? null : registeredAt,
       subscribed_apps_at: subscribedAppsAt ?? null,
-      last_registration_error: registrationError,
+      last_registration_error: effectiveError,
       updated_at: new Date().toISOString(),
     }
 
@@ -542,6 +559,17 @@ export async function POST(request: Request) {
       }
     }
 
+    if (metaVerificationError) {
+      return NextResponse.json({
+        success: true,
+        saved: true,
+        connected: false,
+        registered: false,
+        warning: `Configuration saved, but Meta rejected credentials: ${metaVerificationError}. Please verify your credentials when ready.`,
+        phone_info: null,
+      })
+    }
+
     if (registrationError) {
       // Save succeeded but the number isn't actually live. Return
       // 200 with a structured error so the UI can show the specific
@@ -559,10 +587,6 @@ export async function POST(request: Request) {
       success: true,
       saved: true,
       registered: registeredAt != null,
-      // Credentials are valid and saved, but inbound webhook
-      // registration was skipped because no PIN was supplied (e.g. a
-      // Meta test number). The UI shows the "Not registered" banner
-      // rather than claiming the number is fully live.
       registration_skipped: registrationSkipped,
       phone_info: phoneInfo,
     })
