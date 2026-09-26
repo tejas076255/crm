@@ -38,10 +38,12 @@ async function resolveAccountId(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _adminClient: any = null
 function supabaseAdmin() {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!serviceKey) return null
   if (!_adminClient) {
     _adminClient = createAdminClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      serviceKey
     )
   }
   return _adminClient
@@ -344,9 +346,10 @@ export async function POST(request: Request) {
           encryptedVerifyToken = encrypt(trimmedVerify)
         } catch (err) {
           console.error('Verify token encryption failed:', err)
+          encryptedVerifyToken = existing?.verify_token ?? null
         }
       } else {
-        encryptedVerifyToken = null
+        encryptedVerifyToken = existing?.verify_token ?? null
       }
     } else {
       encryptedVerifyToken = existing?.verify_token ?? null
@@ -359,29 +362,30 @@ export async function POST(request: Request) {
     // inbound message. See issue #136. Post-multi-user we key on
     // account_id (not user_id) since teammates inside the same account
     // all share one config; the conflict is between accounts.
-    const { data: claimed, error: claimedError } = await supabaseAdmin()
-      .from('whatsapp_config')
-      .select('account_id')
-      .eq('phone_number_id', phone_number_id)
-      .neq('account_id', accountId)
-      .maybeSingle()
+    const adminClient = supabaseAdmin()
+    if (adminClient) {
+      try {
+        const { data: claimed, error: claimedError } = await adminClient
+          .from('whatsapp_config')
+          .select('account_id')
+          .eq('phone_number_id', phone_number_id)
+          .neq('account_id', accountId)
+          .maybeSingle()
 
-    if (claimedError) {
-      console.error('Error checking phone_number_id ownership:', claimedError)
-      return NextResponse.json(
-        { error: 'Failed to validate configuration' },
-        { status: 500 }
-      )
-    }
-
-    if (claimed) {
-      return NextResponse.json(
-        {
-          error:
-            'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one wacrm user.',
-        },
-        { status: 409 }
-      )
+        if (claimedError) {
+          console.warn('Error checking phone_number_id ownership:', claimedError)
+        } else if (claimed) {
+          return NextResponse.json(
+            {
+              error:
+                'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one wacrm user.',
+            },
+            { status: 409 }
+          )
+        }
+      } catch (err) {
+        console.warn('Admin check failed:', err)
+      }
     }
 
     // Verify credentials with Meta BEFORE saving (best-effort: save row even if Meta is unreachable or rejects credentials)

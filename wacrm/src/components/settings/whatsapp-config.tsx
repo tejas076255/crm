@@ -118,16 +118,17 @@ export function WhatsAppConfig() {
 
   const saveDraft = useCallback(
     (field: string, val: string) => {
-      if (!accountId) return;
+      const keys = [
+        accountId ? `wacrm_draft_whatsapp_${accountId}` : null,
+        'wacrm_draft_whatsapp_current',
+      ].filter(Boolean) as string[];
+
       try {
-        const currentDraft = JSON.parse(
-          localStorage.getItem(`wacrm_draft_whatsapp_${accountId}`) || '{}'
-        );
-        currentDraft[field] = val;
-        localStorage.setItem(
-          `wacrm_draft_whatsapp_${accountId}`,
-          JSON.stringify(currentDraft)
-        );
+        for (const key of keys) {
+          const currentDraft = JSON.parse(localStorage.getItem(key) || '{}');
+          currentDraft[field] = val;
+          localStorage.setItem(key, JSON.stringify(currentDraft));
+        }
       } catch {}
     },
     [accountId]
@@ -135,6 +136,9 @@ export function WhatsAppConfig() {
 
   const fetchConfig = useCallback(async (acctId: string) => {
     setLoading(true);
+    let serverPayload: any = null;
+    let dbRow: any = null;
+
     try {
       // 1. Load form values from Supabase DB
       const { data, error } = await supabase
@@ -147,6 +151,7 @@ export function WhatsAppConfig() {
         console.error('Failed to load config row from DB:', error);
       }
 
+      dbRow = data;
       if (data) {
         setConfig(data);
         setPhoneNumberId(data.phone_number_id || '');
@@ -177,6 +182,7 @@ export function WhatsAppConfig() {
       try {
         const res = await fetch('/api/whatsapp/config', { method: 'GET' });
         const payload = await res.json();
+        serverPayload = payload;
 
         if (payload.phone_number_id) {
           setPhoneNumberId(payload.phone_number_id);
@@ -208,24 +214,31 @@ export function WhatsAppConfig() {
           setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
           setStatusMessage(payload.message || '');
         }
-
-        // 3. Fallback: check if an unsaved local draft exists for this account
-        try {
-          const draftJson = localStorage.getItem(`wacrm_draft_whatsapp_${acctId}`);
-          if (draftJson) {
-            const draft = JSON.parse(draftJson);
-            if (!data && !payload.phone_number_id) {
-              if (draft.phoneNumberId) setPhoneNumberId(draft.phoneNumberId);
-              if (draft.wabaId) setWabaId(draft.wabaId);
-              if (draft.metaAppId) setMetaAppId(draft.metaAppId);
-              if (draft.verifyToken) setVerifyToken(draft.verifyToken);
-            }
-          }
-        } catch {}
       } catch (err) {
         console.error('Health check failed:', err);
         setConnectionStatus('disconnected');
       }
+
+      // 3. Fallback to local draft for any missing fields
+      try {
+        const draftKey = `wacrm_draft_whatsapp_${acctId}`;
+        const draftJson = localStorage.getItem(draftKey) || localStorage.getItem('wacrm_draft_whatsapp_current');
+        if (draftJson) {
+          const draft = JSON.parse(draftJson);
+          if (!dbRow && !serverPayload?.phone_number_id && draft.phoneNumberId) {
+            setPhoneNumberId(draft.phoneNumberId);
+          }
+          if (!dbRow?.waba_id && !serverPayload?.waba_id && draft.wabaId) {
+            setWabaId(draft.wabaId);
+          }
+          if (!dbRow?.meta_app_id && !serverPayload?.meta_app_id && draft.metaAppId) {
+            setMetaAppId(draft.metaAppId);
+          }
+          if (!serverPayload?.verify_token && draft.verifyToken) {
+            setVerifyToken(draft.verifyToken);
+          }
+        }
+      } catch {}
     } catch (err) {
       console.error('fetchConfig error:', err);
       toast.error('Failed to load WhatsApp configuration');

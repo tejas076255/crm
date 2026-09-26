@@ -103,6 +103,24 @@ export function AiConfig() {
   // the loadedAccountIdRef pattern in whatsapp-config.tsx.
   const loadedAccountIdRef = useRef<string | null>(null);
 
+  const saveDraft = useCallback(
+    (field: string, val: unknown) => {
+      const keys = [
+        accountId ? `wacrm_draft_ai_${accountId}` : null,
+        'wacrm_draft_ai_current',
+      ].filter(Boolean) as string[];
+
+      try {
+        for (const key of keys) {
+          const currentDraft = JSON.parse(localStorage.getItem(key) || '{}');
+          currentDraft[field] = val;
+          localStorage.setItem(key, JSON.stringify(currentDraft));
+        }
+      } catch {}
+    },
+    [accountId]
+  );
+
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
@@ -110,6 +128,20 @@ export function AiConfig() {
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error ?? t('loadFailed'));
+        // Fallback to local draft if API returned plan restriction or error
+        try {
+          const draftKey = accountId ? `wacrm_draft_ai_${accountId}` : 'wacrm_draft_ai_current';
+          const draftJson = localStorage.getItem(draftKey) || localStorage.getItem('wacrm_draft_ai_current');
+          if (draftJson) {
+            const draft = JSON.parse(draftJson);
+            if (draft.provider) setProvider(draft.provider);
+            if (draft.model) setModel(draft.model);
+            if (draft.baseUrl) setBaseUrl(draft.baseUrl);
+            if (draft.systemPrompt) setSystemPrompt(draft.systemPrompt);
+            if (typeof draft.isActive === 'boolean') setIsActive(draft.isActive);
+            if (typeof draft.autoReplyEnabled === 'boolean') setAutoReplyEnabled(draft.autoReplyEnabled);
+          }
+        } catch {}
         return;
       }
       if (data.configured) {
@@ -130,13 +162,39 @@ export function AiConfig() {
         setHasStoredEmbeddingsKey(Boolean(data.has_embeddings_key));
         setEmbeddingsKey(data.has_embeddings_key ? MASKED_KEY : '');
         setEmbeddingsKeyEdited(false);
+      } else {
+        // Not configured in DB yet — check if draft exists
+        try {
+          const draftKey = accountId ? `wacrm_draft_ai_${accountId}` : 'wacrm_draft_ai_current';
+          const draftJson = localStorage.getItem(draftKey) || localStorage.getItem('wacrm_draft_ai_current');
+          if (draftJson) {
+            const draft = JSON.parse(draftJson);
+            if (draft.provider) setProvider(draft.provider);
+            if (draft.model) setModel(draft.model);
+            if (draft.baseUrl) setBaseUrl(draft.baseUrl);
+            if (draft.systemPrompt) setSystemPrompt(draft.systemPrompt);
+            if (typeof draft.isActive === 'boolean') setIsActive(draft.isActive);
+            if (typeof draft.autoReplyEnabled === 'boolean') setAutoReplyEnabled(draft.autoReplyEnabled);
+          }
+        } catch {}
       }
     } catch {
       toast.error(t('loadFailed'));
+      try {
+        const draftKey = accountId ? `wacrm_draft_ai_${accountId}` : 'wacrm_draft_ai_current';
+        const draftJson = localStorage.getItem(draftKey) || localStorage.getItem('wacrm_draft_ai_current');
+        if (draftJson) {
+          const draft = JSON.parse(draftJson);
+          if (draft.provider) setProvider(draft.provider);
+          if (draft.model) setModel(draft.model);
+          if (draft.baseUrl) setBaseUrl(draft.baseUrl);
+          if (draft.systemPrompt) setSystemPrompt(draft.systemPrompt);
+        }
+      } catch {}
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, accountId]);
 
   useEffect(() => {
     if (!accountId || loadedAccountIdRef.current === accountId) return;
@@ -152,10 +210,15 @@ export function AiConfig() {
   // typed a custom model.
   const handleProviderChange = (next: AiProvider) => {
     setProvider(next);
+    saveDraft('provider', next);
     const knownDefaults = Object.values(AI_PROVIDER_DEFAULT_MODEL);
     const isDefaultModel =
       knownDefaults.includes(model) || model.trim() === '';
-    if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
+    if (isDefaultModel) {
+      const defModel = AI_PROVIDER_DEFAULT_MODEL[next];
+      setModel(defModel);
+      saveDraft('model', defModel);
+    }
   };
 
   const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
@@ -219,6 +282,10 @@ export function AiConfig() {
       const data = await res.json();
       if (res.ok) {
         toast.success(t('saveSuccess'));
+        try {
+          if (accountId) localStorage.removeItem(`wacrm_draft_ai_${accountId}`);
+          localStorage.removeItem('wacrm_draft_ai_current');
+        } catch {}
         await fetchConfig();
       } else {
         toast.error(data.error ?? t('saveFailed'));
@@ -321,7 +388,10 @@ export function AiConfig() {
                 <Input
                   id="ai-model"
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  onChange={(e) => {
+                    setModel(e.target.value);
+                    saveDraft('model', e.target.value);
+                  }}
                   placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
                   disabled={disabled}
                 />
@@ -332,7 +402,10 @@ export function AiConfig() {
                       <button
                         key={m}
                         type="button"
-                        onClick={() => setModel(m)}
+                        onClick={() => {
+                          setModel(m);
+                          saveDraft('model', m);
+                        }}
                         className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
                           model === m
                             ? 'border-primary bg-primary/10 text-primary font-medium'
@@ -355,7 +428,10 @@ export function AiConfig() {
                 <Input
                   id="ai-base-url"
                   value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
+                  onChange={(e) => {
+                    setBaseUrl(e.target.value);
+                    saveDraft('baseUrl', e.target.value);
+                  }}
                   placeholder="http://localhost:11434/v1 (or custom OpenAI-compatible URL)"
                   disabled={disabled}
                 />
@@ -494,7 +570,10 @@ export function AiConfig() {
               <Textarea
                 id="ai-prompt"
                 value={systemPrompt}
-                onChange={(e) => setSystemPrompt(e.target.value)}
+                onChange={(e) => {
+                  setSystemPrompt(e.target.value);
+                  saveDraft('systemPrompt', e.target.value);
+                }}
                 placeholder={t('promptPlaceholder')}
                 rows={5}
                 disabled={disabled}
@@ -512,7 +591,10 @@ export function AiConfig() {
               </div>
               <Switch
                 checked={isActive}
-                onCheckedChange={setIsActive}
+                onCheckedChange={(val) => {
+                  setIsActive(val);
+                  saveDraft('isActive', val);
+                }}
                 disabled={disabled}
               />
             </div>
@@ -528,7 +610,10 @@ export function AiConfig() {
               </div>
               <Switch
                 checked={autoReplyEnabled}
-                onCheckedChange={setAutoReplyEnabled}
+                onCheckedChange={(val) => {
+                  setAutoReplyEnabled(val);
+                  saveDraft('autoReplyEnabled', val);
+                }}
                 disabled={disabled || !isActive}
               />
             </div>
