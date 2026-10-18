@@ -60,27 +60,48 @@ function SignupPageInner() {
 
     setLoading(true);
 
-    // If we have an invite token, point Supabase's verification
-    // email back at the join page so the user can accept after
-    // verifying. Without a token, Supabase uses its default
-    // redirect (the app root).
-    const emailRedirectTo = inviteToken
-      ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
-      : undefined;
+    let signupErrorMessage: string | null = null;
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
+    try {
+      // 1. Try server-side proxy route first (same-origin, 100% immune to browser adblock/Brave shields)
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          password,
+          fullName,
+          inviteToken,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        signupErrorMessage = data.error || "Failed to create account";
+      }
+    } catch {
+      // 2. Fallback to direct client call if server proxy fails
+      const emailRedirectTo = inviteToken
+        ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
+        : undefined;
+
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+          },
+          ...(emailRedirectTo ? { emailRedirectTo } : {}),
         },
-        ...(emailRedirectTo ? { emailRedirectTo } : {}),
-      },
-    });
+      });
 
-    if (error) {
-      setError(error.message);
+      if (error) {
+        signupErrorMessage = error.message;
+      }
+    }
+
+    if (signupErrorMessage) {
+      setError(signupErrorMessage);
       setLoading(false);
       return;
     }

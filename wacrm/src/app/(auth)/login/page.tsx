@@ -49,13 +49,32 @@ function LoginPageInner() {
     setError(null);
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    let loginErrorMessage: string | null = null;
 
-    if (error) {
-      setError(error.message);
+    try {
+      // 1. Try server-side proxy route first (same-origin, bypasses browser blocking)
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        loginErrorMessage = data.error || "Failed to sign in";
+      }
+    } catch {
+      // 2. Fallback to direct client call if server proxy fails
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) {
+        loginErrorMessage = error.message;
+      }
+    }
+
+    if (loginErrorMessage) {
+      setError(loginErrorMessage);
       setLoading(false);
       return;
     }
