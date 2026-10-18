@@ -22,7 +22,7 @@ import type { Plan, PlanStatus } from "@/lib/auth/plans";
 import { PLAN_LABELS } from "@/lib/auth/plans";
 import { cn } from "@/lib/utils";
 import { SettingsPanelHead } from "@/components/settings/settings-panel-head";
-import { openRazorpayOrder } from "./checkout";
+import { openPaymentCheckout } from "./checkout";
 
 type BillablePlan = "pro" | "pro_max";
 
@@ -97,9 +97,13 @@ export function BillingPanel() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.error ?? "checkout_failed");
 
-      const result = await openRazorpayOrder({
-        key: body.razorpay_key as string,
+      const result = await openPaymentCheckout({
+        gateway: body.gateway,
+        key: body.merchant_id || body.razorpay_key,
         orderId: body.order_id as string,
+        paymentId: body.payment_id as string | undefined,
+        amount: body.amount as string | undefined,
+        plan: target,
         name: "wacrm",
         description: `${PLAN_LABELS[target]} — ${t("oneTimeBilling")}`,
         prefill: {
@@ -119,9 +123,12 @@ export function BillingPanel() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          gateway: result.gateway,
           order_id: result.orderId,
           payment_id: result.paymentId,
           signature: result.signature,
+          utr: result.utr,
+          plan: target,
         }),
       });
       const verifyBody = await verifyRes.json().catch(() => ({}));

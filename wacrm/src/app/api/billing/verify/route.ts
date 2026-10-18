@@ -4,6 +4,7 @@ import { validatePaymentVerification } from 'razorpay/dist/utils/razorpay-utils'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { keySecret, PLAN_PRICE_PAISE } from '@/lib/billing/config'
 import { razorpay } from '@/lib/billing/razorpay'
+import { fetchYoupiPayment } from '@/lib/billing/youpi'
 import {
   applyPaymentState,
   planFromPaymentNotes,
@@ -12,22 +13,16 @@ import {
 
 export const dynamic = 'force-dynamic'
 
+function isBillablePlan(value: unknown): value is RazorpayPlan {
+  return value === 'pro' || value === 'pro_max'
+}
+
 /**
  * POST /api/billing/verify — activate a plan after a one-time payment (owner)
  *
- * Body: `{ order_id, payment_id, signature }`
- *
- * The Razorpay checkout widget's success callback is client-side and must
- * not be trusted alone — this re-verifies everything server-side:
- *
- *   1. HMAC-SHA256 payment signature over `order_id|payment_id` against
- *      the key secret (constant-time; a forged callback cannot pass).
- *   2. The order on Razorpay, and that it belongs to THIS account
- *      (`receipt === accountId`), is `paid`, and settled the full amount
- *      for the tier tagged in the order's notes.
- *   3. Only then writes the grant via the service role.
- *
- * Idempotent; safe to call repeatedly.
+ * Supports:
+ * 1. YOUPI PG — serverless edge verification against Cloudflare D1
+ * 2. Razorpay — HMAC signature verification & order settlement check
  */
 export async function POST(request: Request) {
   try {
@@ -37,6 +32,93 @@ export async function POST(request: Request) {
     const orderId: unknown = body?.order_id
     const paymentId: unknown = body?.payment_id
     const signature: unknown = body?.signature
+    const gateway: unknown = body?.gateway
+
+    // -----------------------------------------------------------------
+    // 1. YOUPI PG VERIFICATION PATH
+    // -----------------------------------------------------------------
+    if (gateway === 'youpi' || (!signature && typeof paymentId === 'string' && paymentId)) {
+      const pId = typeof paymentId === 'string' ? paymentId : ''
+      if (!pId) {
+        return NextResponse.json(
+          { error: 'payment_id is required' },
+          { status: 400 },
+        )
+      }
+
+      const payment = await fetchYoupiPayment(pId)
+
+      // (a) Must be confirmed SUCCESS on the gateway
+      if (payment.status !== 'SUCCESS') {
+        return NextResponse.json(
+          { error: 'Payment has not been confirmed or verified yet' },
+          { status: 400 },
+        )
+      }
+
+      // (b) Ownership check
+      if (
+        payment.metadata?.accountId &&
+        payment.metadata.accountId !== accountId
+      ) {
+        return NextResponse.json(
+          { error: 'Payment does not belong to this account' },
+          { status: 400 },
+        )
+      }
+
+      // (c) Plan identification
+      const targetPlan =
+        payment.metadata?.plan ||
+        payment.metadata?.wacrmPlan ||
+        (isBillablePlan(body?.plan) ? body.plan : null)
+
+      if (!isBillablePlan(targetPlan)) {
+        return NextResponse.json(
+          { error: 'Payment has no valid plan note; contact support' },
+          { status: 400 },
+        )
+      }
+
+      // (d) Amount settlement check
+      if (payment.amountPaise < PLAN_PRICE_PAISE[targetPlan]) {
+        return NextResponse.json(
+          { error: 'Payment amount is less than plan price' },
+          { status: 400 },
+        )
+      }
+
+      const result = await applyPaymentState({
+        accountId,
+        paymentId: pId,
+        plan: targetPlan,
+        status: 'paid',
+      })
+
+      if (!result.ok) {
+        console.error('[billing/verify/youpi]', result.reason)
+        return NextResponse.json({ error: result.reason }, { status: 400 })
+      }
+
+      console.info(
+        `[billing/verify/youpi] ${targetPlan} activated for account ${accountId} (payment: ${pId}, utr: ${payment.utr ?? 'none'})`,
+      )
+
+      return NextResponse.json({
+        success: true,
+        gateway: 'youpi',
+        order_id: payment.orderId || (typeof orderId === 'string' ? orderId : pId),
+        payment_id: pId,
+        utr: payment.utr,
+        status: 'paid',
+        transition: result.transition,
+        plan: targetPlan,
+      })
+    }
+
+    // -----------------------------------------------------------------
+    // 2. RAZORPAY VERIFICATION PATH
+    // -----------------------------------------------------------------
     if (
       typeof orderId !== 'string' ||
       !orderId ||
@@ -51,15 +133,14 @@ export async function POST(request: Request) {
       )
     }
 
-    // (2) The client can't be allowed to settle on its word — verify the
-    // payment signature the checkout widget hands back.
+    // Verify HMAC signature
     if (!validatePaymentVerification({ payment_id: paymentId, order_id: orderId }, signature, keySecret())) {
       return NextResponse.json({ error: 'Invalid payment signature' }, { status: 400 })
     }
 
     const order = await razorpay().orders.fetch(orderId)
 
-    // (3) Ownership — the order must have been issued for this account.
+    // Ownership
     if (order.receipt !== accountId) {
       return NextResponse.json(
         { error: 'Order does not belong to this account' },
@@ -67,8 +148,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // (4) Tier + settlement. Never guess a tier from the amount; the order's
-    // notes carry the authoritative tag set at checkout.
+    // Tier + settlement
     const plan = planFromPaymentNotes(order.notes) as RazorpayPlan | null
     if (!plan) {
       return NextResponse.json(
@@ -102,6 +182,7 @@ export async function POST(request: Request) {
     )
     return NextResponse.json({
       success: true,
+      gateway: 'razorpay',
       order_id: orderId,
       payment_id: paymentId,
       status: order.status,

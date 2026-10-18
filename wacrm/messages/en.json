@@ -1564,7 +1564,7 @@
     },
     "billing": {
       "title": "Billing & plan",
-      "description": "Your account's plan controls which features unlock — Automations & flows need Pro, AI Agents need Pro Max. Payments run on Razorpay.",
+      "description": "Your account's plan controls which features unlock — Automations & flows need Pro, AI Agents need Pro Max. Payments run securely via UPI Instant Pay.",
       "statusNone": "Not subscribed",
       "statusActive": "Active",
       "statusPastDue": "Payment due",
@@ -1584,7 +1584,7 @@
       "featureAi": "AI reply assistant & knowledge base",
       "activated": "You're on the {plan} plan. Unlocked features are now live.",
       "checkoutError": "Checkout failed: {message}",
-      "testModeNote": "Payments run in Razorpay test mode — use test card 4111 1111 1111 1111 (CVV any, expiry a future date) to complete a checkout."
+      "testModeNote": "Payments are processed directly via UPI (Google Pay, PhonePe, Paytm, BHIM). Fast & instant activation with zero platform fees."
     },
     "groups": {
       "account": "Account",

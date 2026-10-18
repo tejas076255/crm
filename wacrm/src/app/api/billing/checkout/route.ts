@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { publicKeyId } from '@/lib/billing/config'
 import { createPaymentOrder } from '@/lib/billing/razorpay'
+import { createYoupiPayment, YOUPI_BASE_URL, YOUPI_MERCHANT_ID } from '@/lib/billing/youpi'
 import type { RazorpayPlan } from '@/lib/billing/payment-state'
 
 export const dynamic = 'force-dynamic'
@@ -16,15 +17,7 @@ function isBillablePlan(value: unknown): value is RazorpayPlan {
  *
  * Body: `{ plan: 'pro' | 'pro_max' }`
  *
- * Creates a Razorpay *order* (not a subscription — one-time payments,
- * which don't need the account's Subscriptions module). The order is
- * the server-side contract: its `receipt` is the account id and its
- * `notes.wacrmPlan` is the tier, both read back on verify/webhook so the
- * client can never name its own price. Returns the order id + public key
- * for the client checkout.js widget — never a secret.
- *
- * No account write happens here; the purchase is only recorded once a
- * captured payment is verified server-side.
+ * Supports YOUPI PG (Direct serverless UPI) and Razorpay fallback.
  */
 export async function POST(request: Request) {
   try {
@@ -39,13 +32,36 @@ export async function POST(request: Request) {
       )
     }
 
-    const order = await createPaymentOrder(plan, accountId)
+    const hasRazorpay = Boolean(
+      process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID &&
+      process.env.RAZORPAY_KEY_SECRET &&
+      !body?.preferYoupi
+    )
 
-    console.info(`[billing/checkout] user ${userId} opened ${plan} checkout (${order.id})`)
+    if (hasRazorpay) {
+      const order = await createPaymentOrder(plan, accountId)
+      console.info(`[billing/checkout] user ${userId} opened ${plan} checkout on Razorpay (${order.id})`)
+      return NextResponse.json({
+        success: true,
+        gateway: 'razorpay',
+        order_id: order.id,
+        razorpay_key: publicKeyId(),
+      })
+    }
+
+    // Default: YOUPI PG direct serverless UPI payment
+    const youpiPayment = await createYoupiPayment({ plan, accountId })
+    console.info(`[billing/checkout] user ${userId} opened ${plan} checkout on Youpi PG (${youpiPayment.paymentId})`)
+
     return NextResponse.json({
       success: true,
-      order_id: order.id,
-      razorpay_key: publicKeyId(),
+      gateway: 'youpi',
+      payment_id: youpiPayment.paymentId,
+      order_id: youpiPayment.orderId,
+      amount: youpiPayment.amount,
+      checkout_url: youpiPayment.checkoutUrl,
+      youpi_url: YOUPI_BASE_URL,
+      merchant_id: YOUPI_MERCHANT_ID,
     })
   } catch (err) {
     return toErrorResponse(err)
