@@ -144,12 +144,20 @@ const nextConfig: NextConfig = {
         headers: [{ key: "Cache-Control", value: "no-store" }],
       },
       {
-        source: "/:path((?!_next/static|_next/image|api).*)",
+        source: "/supabase-api/:path*",
+        headers: [{ key: "Cache-Control", value: "no-store, no-cache, must-revalidate" }],
+      },
+      {
+        source: "/(login|signup|forgot-password)",
+        headers: [{ key: "Cache-Control", value: "no-store, no-cache, must-revalidate" }],
+      },
+      {
+        source: "/:path((?!_next/static|_next/image|api|supabase-api|login|signup|forgot-password).*)",
         headers: [
           {
             key: "Cache-Control",
             value:
-              "public, max-age=0, s-maxage=300, stale-while-revalidate=86400",
+              "public, max-age=0, s-maxage=60, stale-while-revalidate=300",
           },
         ],
       },

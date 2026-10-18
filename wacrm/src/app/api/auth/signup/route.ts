@@ -3,6 +3,19 @@ import { createClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: CORS_HEADERS,
+  })
+}
+
 /**
  * POST /api/auth/signup — Server-side signup proxy
  *
@@ -20,14 +33,14 @@ export async function POST(request: Request) {
     if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
       return NextResponse.json(
         { error: 'Email and password are required' },
-        { status: 400 },
+        { status: 400, headers: CORS_HEADERS },
       )
     }
 
     if (password.length < 6) {
       return NextResponse.json(
         { error: 'Password must be at least 6 characters' },
-        { status: 400 },
+        { status: 400, headers: CORS_HEADERS },
       )
     }
 

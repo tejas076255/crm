@@ -11,8 +11,13 @@ const SEVEN_DAYS_IN_SECONDS = 604800 // 7 days
 export function createClient() {
   if (browserClient) return browserClient
 
+  const supabaseUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/supabase-api`
+      : process.env.NEXT_PUBLIC_SUPABASE_URL!
+
   browserClient = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    supabaseUrl,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookieOptions: {

@@ -2,6 +2,14 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  // Pass through Supabase proxy and auth API routes immediately
+  if (
+    request.nextUrl.pathname.startsWith('/supabase-api') ||
+    request.nextUrl.pathname.startsWith('/api/auth/')
+  ) {
+    return NextResponse.next()
+  }
+
   let supabaseResponse = NextResponse.next({ request })
 
   const SEVEN_DAYS_IN_SECONDS = 604800 // 7 days
