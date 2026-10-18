@@ -75,7 +75,20 @@ function SignupPageInner() {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) {
+      if (res.ok && data.success) {
+        if (data.session) {
+          try {
+            await supabase.auth.setSession(data.session);
+          } catch {
+            // Non-fatal
+          }
+          const destination = inviteToken
+            ? `/join/${encodeURIComponent(inviteToken)}`
+            : "/dashboard";
+          window.location.href = destination;
+          return;
+        }
+      } else {
         signupErrorMessage = data.error || "Failed to create account";
       }
     } catch {
@@ -84,7 +97,7 @@ function SignupPageInner() {
         ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
         : undefined;
 
-      const { error } = await supabase.auth.signUp({
+      const { data: clientData, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -97,6 +110,12 @@ function SignupPageInner() {
 
       if (error) {
         signupErrorMessage = error.message;
+      } else if (clientData.session) {
+        const destination = inviteToken
+          ? `/join/${encodeURIComponent(inviteToken)}`
+          : "/dashboard";
+        window.location.href = destination;
+        return;
       }
     }
 

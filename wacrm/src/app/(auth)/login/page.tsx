@@ -50,6 +50,7 @@ function LoginPageInner() {
     setLoading(true);
 
     let loginErrorMessage: string | null = null;
+    let loginSuccess = false;
 
     try {
       // 1. Try server-side proxy route first (same-origin, bypasses browser blocking)
@@ -59,21 +60,32 @@ function LoginPageInner() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) {
+      if (res.ok && data.success) {
+        loginSuccess = true;
+        if (data.session) {
+          try {
+            await supabase.auth.setSession(data.session);
+          } catch {
+            // Non-fatal if client-side session sync encounters an issue
+          }
+        }
+      } else {
         loginErrorMessage = data.error || "Failed to sign in";
       }
     } catch {
-      // 2. Fallback to direct client call if server proxy fails
-      const { error } = await supabase.auth.signInWithPassword({
+      // 2. Fallback to direct client call if server proxy network fails
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
       if (error) {
         loginErrorMessage = error.message;
+      } else if (data.session) {
+        loginSuccess = true;
       }
     }
 
-    if (loginErrorMessage) {
+    if (loginErrorMessage && !loginSuccess) {
       setError(loginErrorMessage);
       setLoading(false);
       return;

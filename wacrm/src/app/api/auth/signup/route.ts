@@ -52,10 +52,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
+    let activeSession = data.session
+
+    // If auto-confirm is enabled and a user is created, log in to establish server session cookies
+    if (data.user && !activeSession) {
+      const signInRes = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      }).catch(() => null)
+      if (signInRes?.data?.session) {
+        activeSession = signInRes.data.session
+      }
+    }
+
     return NextResponse.json({
       success: true,
       user: data.user,
-      session: data.session,
+      session: activeSession,
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error'
