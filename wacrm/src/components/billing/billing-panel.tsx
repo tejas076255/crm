@@ -103,6 +103,7 @@ export function BillingPanel() {
         orderId: body.order_id as string,
         paymentId: body.payment_id as string | undefined,
         amount: body.amount as string | undefined,
+        checkoutUrl: body.checkout_url as string | undefined,
         plan: target,
         name: "wacrm",
         description: `${PLAN_LABELS[target]} — ${t("oneTimeBilling")}`,

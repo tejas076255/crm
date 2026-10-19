@@ -84,6 +84,7 @@ export interface PaymentCheckoutOptions {
   orderId: string;
   paymentId?: string;
   amount?: string;
+  checkoutUrl?: string;
   plan?: string;
   accountId?: string;
   name?: string;
@@ -104,6 +105,59 @@ export interface PaymentCheckoutResult {
 export type RazorpayOrderOptions = PaymentCheckoutOptions;
 export type RazorpayOrderResult = PaymentCheckoutResult;
 
+function openDirectYoupiModal(
+  checkoutUrl: string,
+  onClose: () => void,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onSuccess: (payload: any) => void,
+) {
+  const overlay = document.createElement("div");
+  overlay.id = "youpi-checkout-modal";
+  overlay.style.cssText =
+    "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(15,23,42,0.85);backdrop-filter:blur(10px);z-index:999999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;";
+
+  const container = document.createElement("div");
+  container.style.cssText =
+    "position:relative;width:100%;max-width:440px;height:92vh;max-height:720px;border-radius:28px;overflow:hidden;box-shadow:0 25px 60px -15px rgba(0,0,0,0.8);background:#0f172a;border:1px solid rgba(255,255,255,0.1);";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.innerHTML = "✕";
+  closeBtn.style.cssText =
+    "position:absolute;top:16px;right:16px;background:rgba(255,255,255,0.15);color:white;border:none;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;z-index:10;transition:all 0.2s;";
+  closeBtn.onmouseenter = () => (closeBtn.style.background = "rgba(255,255,255,0.3)");
+  closeBtn.onmouseleave = () => (closeBtn.style.background = "rgba(255,255,255,0.15)");
+
+  const cleanup = () => {
+    window.removeEventListener("message", onMsg);
+    if (document.body.contains(overlay)) {
+      document.body.removeChild(overlay);
+    }
+  };
+
+  closeBtn.onclick = () => {
+    cleanup();
+    onClose();
+  };
+
+  const iframe = document.createElement("iframe");
+  iframe.src = checkoutUrl.includes("?") ? `${checkoutUrl}&embed=1` : `${checkoutUrl}?embed=1`;
+  iframe.style.cssText = "width:100%;height:100%;border:none;";
+
+  function onMsg(e: MessageEvent) {
+    if (e.data && e.data.type === "YOUPI_PAYMENT_SUCCESS") {
+      cleanup();
+      onSuccess(e.data.payload);
+    }
+  }
+
+  window.addEventListener("message", onMsg);
+
+  container.appendChild(closeBtn);
+  container.appendChild(iframe);
+  overlay.appendChild(container);
+  document.body.appendChild(overlay);
+}
+
 /**
  * Universal payment checkout launcher.
  * Defaults to Youpi PG unless explicit razorpay key is provided.
@@ -120,6 +174,46 @@ export async function openPaymentCheckout(
   }
 
   // --- YOUPI Serverless UPI Gateway ---
+  // If the server-side route already generated a checkoutUrl, directly open
+  // the modal to prevent duplicate order initialization (UNIQUE constraint in D1).
+  if (opts.checkoutUrl) {
+    return new Promise<PaymentCheckoutResult>((resolve) => {
+      let settled = false;
+      const settle = (result: PaymentCheckoutResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(guard);
+        resolve(result);
+      };
+
+      const guard = setTimeout(() => {
+        settle({ paid: false, orderId: opts.orderId, gateway: "youpi" });
+      }, SETTLE_GUARD_MS);
+
+      try {
+        openDirectYoupiModal(
+          opts.checkoutUrl!,
+          () => {
+            settle({ paid: false, gateway: "youpi", orderId: opts.orderId });
+          },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (payload: any) => {
+            settle({
+              paid: true,
+              gateway: "youpi",
+              orderId: payload?.orderId || opts.orderId,
+              paymentId: payload?.paymentId || opts.paymentId,
+              utr: payload?.utr,
+            });
+          },
+        );
+      } catch (err) {
+        console.error("[checkout] Youpi direct modal error:", err);
+        settle({ paid: false, gateway: "youpi", orderId: opts.orderId });
+      }
+    });
+  }
+
   const Youpi = await loadYoupiCheckout();
 
   return new Promise<PaymentCheckoutResult>((resolve) => {
