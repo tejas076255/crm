@@ -69,19 +69,34 @@ function LoginPageInner() {
             // Non-fatal if client-side session sync encounters an issue
           }
         }
+      } else if (res.status >= 500) {
+        // Server error: fallback to client SDK call
+        const { data: clientData, error: clientErr } =
+          await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
+        if (clientErr) {
+          loginErrorMessage = clientErr.message;
+        } else if (clientData.session) {
+          loginSuccess = true;
+          loginErrorMessage = null;
+        }
       } else {
         loginErrorMessage = data.error || "Failed to sign in";
       }
     } catch {
       // 2. Fallback to direct client call if server proxy network fails
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) {
-        loginErrorMessage = error.message;
-      } else if (data.session) {
+      const { data: clientData, error: clientErr } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+      if (clientErr) {
+        loginErrorMessage = clientErr.message;
+      } else if (clientData.session) {
         loginSuccess = true;
+        loginErrorMessage = null;
       }
     }
 

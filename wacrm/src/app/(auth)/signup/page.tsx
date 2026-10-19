@@ -88,6 +88,32 @@ function SignupPageInner() {
           window.location.href = destination;
           return;
         }
+      } else if (res.status >= 500) {
+        // Server error: fallback to client SDK call
+        const emailRedirectTo = inviteToken
+          ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
+          : undefined;
+
+        const { data: clientData, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: fullName,
+            },
+            ...(emailRedirectTo ? { emailRedirectTo } : {}),
+          },
+        });
+
+        if (error) {
+          signupErrorMessage = error.message;
+        } else if (clientData.session) {
+          const destination = inviteToken
+            ? `/join/${encodeURIComponent(inviteToken)}`
+            : "/dashboard";
+          window.location.href = destination;
+          return;
+        }
       } else {
         signupErrorMessage = data.error || "Failed to create account";
       }

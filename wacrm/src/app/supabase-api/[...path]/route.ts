@@ -46,6 +46,12 @@ async function proxy(
     })
 
     const resHeaders = new Headers(upstreamRes.headers)
+    // Strip upstream transport and compression headers so Next/Cloudflare can encode properly
+    resHeaders.delete('content-encoding')
+    resHeaders.delete('content-length')
+    resHeaders.delete('transfer-encoding')
+    resHeaders.delete('connection')
+
     // Guarantee CORS headers so client fetch never gets blocked
     resHeaders.set('Access-Control-Allow-Origin', '*')
     resHeaders.set(
@@ -54,10 +60,20 @@ async function proxy(
     )
     resHeaders.set(
       'Access-Control-Allow-Headers',
-      'Content-Type, Authorization, apikey, x-client-info, prefer',
+      'Content-Type, Authorization, apikey, x-client-info, prefer, range',
+    )
+    resHeaders.set(
+      'Access-Control-Expose-Headers',
+      'content-range, range-unit, preference-applied, x-total-count, sb-gateway-version',
     )
 
-    return new NextResponse(upstreamRes.body, {
+    // RFC 7230: 204 No Content, 205 Reset Content, 304 Not Modified must NOT have a body
+    const isNoBodyStatus =
+      upstreamRes.status === 204 ||
+      upstreamRes.status === 205 ||
+      upstreamRes.status === 304
+
+    return new NextResponse(isNoBodyStatus ? null : upstreamRes.body, {
       status: upstreamRes.status,
       statusText: upstreamRes.statusText,
       headers: resHeaders,
@@ -83,7 +99,9 @@ export async function OPTIONS() {
       'Access-Control-Allow-Methods':
         'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD',
       'Access-Control-Allow-Headers':
-        'Content-Type, Authorization, apikey, x-client-info, prefer',
+        'Content-Type, Authorization, apikey, x-client-info, prefer, range',
+      'Access-Control-Expose-Headers':
+        'content-range, range-unit, preference-applied, x-total-count, sb-gateway-version',
       'Access-Control-Max-Age': '86400',
     },
   })
