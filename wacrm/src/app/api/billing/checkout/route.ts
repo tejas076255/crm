@@ -64,6 +64,11 @@ export async function POST(request: Request) {
       merchant_id: YOUPI_MERCHANT_ID,
     })
   } catch (err) {
-    return toErrorResponse(err)
+    console.error('[billing/checkout] error:', err)
+    if (err instanceof Error && (err.name === 'UnauthorizedError' || err.name === 'ForbiddenError')) {
+      return toErrorResponse(err)
+    }
+    const message = err instanceof Error ? err.message : 'Internal server error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

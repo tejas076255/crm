@@ -38,6 +38,23 @@ export interface YoupiPaymentDetails {
 }
 
 /**
+ * Helper to get the best fetcher (service binding or global fetch)
+ */
+async function getYoupiFetcher(): Promise<typeof fetch> {
+  try {
+    const { getCloudflareContext } = await import('@opennextjs/cloudflare')
+    const ctx = await getCloudflareContext({ async: true })
+    const service = (ctx.env as Record<string, any>)?.YOUPI_SERVICE
+    if (service && typeof service.fetch === 'function') {
+      return service.fetch.bind(service)
+    }
+  } catch {
+    // Non-Cloudflare or service binding not found: fallback to global fetch
+  }
+  return fetch
+}
+
+/**
  * Creates a payment session on Youpi PG for a billable CRM plan (pro / pro_max).
  */
 export async function createYoupiPayment(args: {
@@ -50,7 +67,9 @@ export async function createYoupiPayment(args: {
   const amountRupees = (paise / 100).toFixed(2)
   const orderId = `WACRM-${accountId.slice(0, 8)}-${plan}-${Date.now()}`
 
-  const res = await fetch(`${YOUPI_BASE_URL}/api/v1/payments`, {
+  const fetcher = await getYoupiFetcher()
+
+  const res = await fetcher(`${YOUPI_BASE_URL}/api/v1/payments`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -81,7 +100,9 @@ export async function createYoupiPayment(args: {
  * Fetches status and details of a payment by its paymentId from Youpi Edge D1.
  */
 export async function fetchYoupiPayment(paymentId: string): Promise<YoupiPaymentDetails> {
-  const res = await fetch(`${YOUPI_BASE_URL}/api/v1/payments/${paymentId}`, {
+  const fetcher = await getYoupiFetcher()
+
+  const res = await fetcher(`${YOUPI_BASE_URL}/api/v1/payments/${paymentId}`, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',

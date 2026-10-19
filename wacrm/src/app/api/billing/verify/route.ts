@@ -190,6 +190,11 @@ export async function POST(request: Request) {
       plan,
     })
   } catch (err) {
-    return toErrorResponse(err)
+    console.error('[billing/verify] error:', err)
+    if (err instanceof Error && (err.name === 'UnauthorizedError' || err.name === 'ForbiddenError')) {
+      return toErrorResponse(err)
+    }
+    const message = err instanceof Error ? err.message : 'Verification failed'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

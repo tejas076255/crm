@@ -3,11 +3,20 @@
   "name": "crm",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-09-19",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "services": [
+    {
+      "binding": "YOUPI_SERVICE",
+      "service": "youpi"
+    }
+  ],
   "observability": {
     "enabled": true
   },
